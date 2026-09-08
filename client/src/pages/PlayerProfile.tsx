@@ -42,6 +42,7 @@ import { PlayerName } from '../components/player/PlayerName';
 import type { PlayerDetail } from '../types/api.types';
 import { useAuth } from '../contexts/AuthContext';
 import { useCurrentMatchStatus } from '../hooks/useCurrentMatchStatus';
+import { PlayerWebcamControl } from '../components/player/PlayerWebcamControl';
 import { useTranslation } from 'react-i18next';
 import type {
   Team,
@@ -989,6 +990,7 @@ export default function PlayerProfile() {
             volume={volume}
             soundFile={soundFile}
           />
+          {playerSteamId === steamId && <PlayerWebcamControl live={currentMatch?.status === 'live'} />}
           {/* Local navigation (kept minimal; main links live in the navbar) */}
           <Box display="flex" justifyContent="flex-end" alignItems="center">
             {playerSteamId === steamId && (

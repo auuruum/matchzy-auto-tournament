@@ -12,6 +12,13 @@ export interface HudPlayerProjection {
   photoUrl: string | null;
   countryCode: string | null;
   teamId: string;
+  webcamEnabled?: boolean;
+}
+
+export interface HudWebcamProjection {
+  enabled: boolean;
+  delaySeconds: number;
+  players: string[];
 }
 
 export interface HudPlayerStatProjection {
@@ -100,6 +107,7 @@ export interface HudProjectionV1 {
     status: string;
   };
   match: HudMatchProjection;
+  webcams: HudWebcamProjection;
 }
 
 export interface HudCurrentResponseV1 {
@@ -109,4 +117,5 @@ export interface HudCurrentResponseV1 {
   generatedAt: string;
   tournament: HudProjectionV1['tournament'] | null;
   match: HudMatchProjection | null;
+  webcams: HudWebcamProjection;
 }

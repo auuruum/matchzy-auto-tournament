@@ -26,6 +26,7 @@ import ConnectSteam from './pages/ConnectSteam';
 import Maps from './pages/Maps';
 import Templates from './pages/Templates';
 import ELOTemplates from './pages/ELOTemplates';
+import Webcams from './pages/Webcams';
 import BroadcastVeto from './pages/BroadcastVeto';
 import Layout from './components/layout/Layout';
 import NotFound from './pages/NotFound';
@@ -207,6 +208,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute adminOnly={false}>
             <FindPlayer />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/webcams"
+        element={
+          <ProtectedRoute adminOnly={false}>
+            <Webcams />
           </ProtectedRoute>
         }
       />

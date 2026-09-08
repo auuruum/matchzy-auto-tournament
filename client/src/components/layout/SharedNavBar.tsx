@@ -234,6 +234,9 @@ export const SharedNavBar: React.FC<SharedNavBarProps> = ({
           <Button color="inherit" component={RouterLink} to="/player" size="small" sx={{ px: { sm: 0.5, lg: 1.5 } }}>
             {t('nav.players')}
           </Button>
+          <Button color="inherit" component={RouterLink} to="/webcams" size="small" sx={{ px: { sm: 0.5, lg: 1.5 } }}>
+            {t('nav.webcams', 'Webcams')}
+          </Button>
           <Button color="inherit" component={RouterLink} to="/stats" size="small" sx={{ px: { sm: 0.5, lg: 1.5 } }}>
             {t('nav.playerStats')}
           </Button>
@@ -265,6 +268,7 @@ export const SharedNavBar: React.FC<SharedNavBarProps> = ({
         >
           {[
             ['/player', t('nav.players')],
+            ['/webcams', t('nav.webcams', 'Webcams')],
             ['/stats', t('nav.playerStats')],
             ['/matches', t('nav.matches')],
             ['/tournament/1/leaderboard', t('nav.leaderboard')],

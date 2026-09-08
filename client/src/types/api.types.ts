@@ -211,6 +211,8 @@ export interface PlayerDetail {
   updatedAt: number;
   isAdmin?: boolean;
   isSpectator?: boolean;
+  webcamEnabled?: boolean;
+  webcamBlocked?: boolean;
 }
 
 export interface PlayersResponse extends ApiResponse {

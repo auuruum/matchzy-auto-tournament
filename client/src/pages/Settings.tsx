@@ -33,6 +33,7 @@ import { DEFAULT_BRANDING } from '../contexts/BrandingContext';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { useIsDevelopment } from '../hooks/useIsDevelopment';
 import { useTranslation } from 'react-i18next';
+import { WebcamSettingsPanel } from '../components/admin/WebcamSettingsPanel';
 
 declare const __APP_VERSION__: string | undefined;
 
@@ -1070,6 +1071,8 @@ export default function Settings() {
             {/* Players & access control */}
             <TabPanel value={tabIndex} index={1}>
               <Stack spacing={3}>
+                <WebcamSettingsPanel />
+                <Divider />
                 <Box>
                   <Typography variant="h6" fontWeight={600} gutterBottom>
                     {t('settingsPage.players.registration.title')}

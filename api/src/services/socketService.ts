@@ -1,4 +1,4 @@
-import { Server as SocketIOServer } from 'socket.io';
+import { Server as SocketIOServer, type Socket } from 'socket.io';
 import type { Server as HTTPServer } from 'http';
 import { log } from '../utils/logger';
 import type {
@@ -10,9 +10,25 @@ import type {
   VetoUpdateEvent,
 } from '../types/socket.types';
 import { hudTokenService } from './hudTokenService';
+import { getVerifiedPlayerSteamId } from '../utils/signedPlayerCookie';
+import { webcamService, type WebcamSettings } from './webcamService';
 
 let io: SocketIOServer | null = null;
 let hudNamespace: ReturnType<SocketIOServer['of']> | null = null;
+let webcamNamespace: ReturnType<SocketIOServer['of']> | null = null;
+const webcamHuds = new Map<string, Socket>();
+
+function emitCameraHudList(): void {
+  const ids = Array.from(webcamHuds.keys());
+  webcamNamespace?.emit('webcam:hud-list', ids);
+}
+
+function emitCameraStatus(): void {
+  void webcamService.getSettings().then(() => {
+    hudNamespace?.emit('playersCameraStatus', []);
+    emitCameraHudList();
+  });
+}
 
 export function initializeSocket(httpServer: HTTPServer): SocketIOServer {
   io = new SocketIOServer(httpServer, {
@@ -44,6 +60,53 @@ export function initializeSocket(httpServer: HTTPServer): SocketIOServer {
   });
   hudNamespace.on('connection', (socket) => {
     log.debug(`Authenticated JTs-Hud client connected: ${socket.id}`);
+    socket.on('registerAsHUD', (uuid: unknown) => {
+      if (typeof uuid !== 'string' || !uuid.trim()) return;
+      socket.data.webcamUuid = uuid.trim();
+      webcamHuds.set(socket.data.webcamUuid, socket);
+      emitCameraStatus();
+      socket.once('disconnect', () => {
+        if (webcamHuds.get(socket.data.webcamUuid) === socket) webcamHuds.delete(socket.data.webcamUuid);
+        emitCameraHudList();
+      });
+    });
+    socket.on('offerFromHUD', (uuid: unknown, signal: unknown, steamid: unknown) => {
+      if (socket.data.webcamUuid !== uuid || typeof steamid !== 'string') return;
+      webcamNamespace?.to(`player:${steamid}`).emit('offerFromHUD', uuid, signal, steamid);
+    });
+  });
+
+  webcamNamespace = io.of('/webcam');
+  webcamNamespace.use(async (socket, next) => {
+    const steamId = getVerifiedPlayerSteamId(socket.handshake.headers.cookie);
+    if (!steamId || !(await webcamService.getPlayerState(steamId)).exists) {
+      next(new Error('Registered MAT player login required'));
+      return;
+    }
+    socket.data.steamId = steamId;
+    next();
+  });
+  webcamNamespace.on('connection', (socket) => {
+    const steamId = socket.data.steamId as string;
+    socket.join(`player:${steamId}`);
+    socket.emit('webcam:hud-list', Array.from(webcamHuds.keys()));
+    socket.on('webcam:announce', async () => {
+      const settings = await webcamService.getSettings();
+      const state = await webcamService.getPlayerState(steamId);
+      if (settings.enabled && state.enabled && !state.blocked) {
+        socket.emit('webcam:hud-list', Array.from(webcamHuds.keys()));
+      }
+    });
+    socket.on('offerFromPlayer', async (uuid: unknown, signal: unknown, playerSteamId: unknown) => {
+      if ((playerSteamId !== undefined && playerSteamId !== steamId) || typeof uuid !== 'string') return;
+      const [settings, state] = await Promise.all([
+        webcamService.getSettings(),
+        webcamService.getPlayerState(steamId),
+      ]);
+      if (!settings.enabled || !state.enabled || state.blocked) return;
+      webcamHuds.get(uuid)?.emit('offerFromPlayer', uuid, signal, steamId);
+    });
+    socket.on('disconnect', () => socket.removeAllListeners());
   });
 
   log.success('Socket.io initialized');
@@ -145,6 +208,19 @@ export function emitHudProjectionInvalidated(reason: string): void {
       at: new Date().toISOString(),
     });
   }
+}
+
+export function emitWebcamSettingsChanged(settings: WebcamSettings): void {
+  if (!settings.enabled) webcamNamespace?.emit('webcam:revoked', { reason: 'globally-disabled' });
+  emitCameraStatus();
+  hudNamespace?.emit('webcam:settings', settings);
+  emitHudProjectionInvalidated('webcam-settings-changed');
+}
+
+export function emitWebcamPlayerRevoked(steamId: string): void {
+  webcamNamespace?.to(`player:${steamId}`).emit('webcam:revoked', { steamId });
+  hudNamespace?.emit('webcam:revoked', { steamId });
+  emitCameraStatus();
 }
 
 export function disconnectHudIntegrationClients(): void {

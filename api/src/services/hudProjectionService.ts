@@ -16,6 +16,7 @@ import type {
   HudTeamProjection,
   HudVetoActionProjection,
 } from '../types/hudProjection.types';
+import { webcamService } from './webcamService';
 
 const BROADCAST_MATCH_SETTING = 'jts_hud_broadcast_match_slug';
 
@@ -464,6 +465,17 @@ class HudProjectionService {
       this.projectTeam(team2Id, publicBaseUrl, playerRecords, config.team2),
       this.projectMaps(projectionMatch, veto, config),
     ]);
+    const webcamSettings = await webcamService.getSettings();
+    const rosterIds = [...projectedTeam1.players, ...projectedTeam2.players].map(
+      (player) => player.steamId
+    );
+    const webcamPlayers =
+      getStatus(match, veto) === 'live' && webcamSettings.enabled
+        ? await webcamService.getEnabledPlayerIds(rosterIds)
+        : [];
+    for (const player of [...projectedTeam1.players, ...projectedTeam2.players]) {
+      player.webcamEnabled = webcamPlayers.includes(player.steamId);
+    }
     const seriesScore = maps.reduce(
       (score, map) => {
         if (map.winnerTeamId === projectedTeam1.id) score.team1 += 1;
@@ -513,6 +525,11 @@ class HudProjectionService {
         status: tournament.status,
       },
       match: projectedMatch,
+      webcams: {
+        enabled: webcamSettings.enabled,
+        delaySeconds: webcamSettings.delaySeconds,
+        players: webcamPlayers,
+      },
     };
     const revision = createHash('sha256').update(JSON.stringify(core)).digest('hex').slice(0, 16);
     return { ...core, revision, generatedAt: new Date().toISOString() };
@@ -531,6 +548,7 @@ class HudProjectionService {
         generatedAt: new Date().toISOString(),
         tournament: null,
         match: null,
+        webcams: { enabled: false, delaySeconds: 0, players: [] },
       };
     }
     const projection = await this.getProjectionForMatch(match.slug, publicBaseUrl);
@@ -542,6 +560,7 @@ class HudProjectionService {
         generatedAt: new Date().toISOString(),
         tournament: null,
         match: null,
+        webcams: { enabled: false, delaySeconds: 0, players: [] },
       };
     }
     return projection;

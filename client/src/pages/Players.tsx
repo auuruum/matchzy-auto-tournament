@@ -21,6 +21,7 @@ import PersonIcon from '@mui/icons-material/Person';
 import SearchIcon from '@mui/icons-material/Search';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import VisibilityIcon from '@mui/icons-material/Visibility';
+import VideocamOffIcon from '@mui/icons-material/VideocamOff';
 import { api } from '../utils/api';
 import PlayerModal from '../components/modals/PlayerModal';
 import { PlayerImportModal } from '../components/modals/PlayerImportModal';
@@ -60,6 +61,17 @@ export default function Players() {
       await startImpersonation(player.id);
     } catch (error) {
       showError(error instanceof Error ? error.message : t('impersonation.failed'));
+    }
+  };
+
+  const handleWebcamBlock = async (player: PlayerDetail) => {
+    try {
+      await api.put(`/api/webcams/players/${encodeURIComponent(player.id)}/block`, {
+        blocked: !player.webcamBlocked,
+      });
+      await loadPlayers();
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Failed to update webcam access');
     }
   };
 
@@ -380,6 +392,18 @@ export default function Players() {
                               </IconButton>
                             </Tooltip>
                           )}
+                          <Tooltip title={player.webcamBlocked ? 'Allow webcam' : 'Force-disable webcam'}>
+                            <IconButton
+                              size="small"
+                              color={player.webcamBlocked ? 'error' : 'default'}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void handleWebcamBlock(player);
+                              }}
+                            >
+                              <VideocamOffIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
                         </Box>
                         <Typography variant="caption" color="text.secondary" display="block">
                           {player.id}

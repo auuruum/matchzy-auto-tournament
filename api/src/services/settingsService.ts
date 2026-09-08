@@ -11,6 +11,8 @@ export type AppSettingKey =
   | 'matchzy_debug_chat'
   | 'ratings_enabled'
   | 'allow_self_register'
+  | 'webcams_enabled'
+  | 'webcam_delay_seconds'
   | 'branding_name'
   | 'branding_logo_url'
   | 'branding_primary_color'
@@ -64,6 +66,8 @@ const ALLOWED_KEYS: AppSettingKey[] = [
   'matchzy_debug_chat',
   'ratings_enabled',
   'allow_self_register',
+  'webcams_enabled',
+  'webcam_delay_seconds',
   'branding_name',
   'branding_logo_url',
   'branding_primary_color',
@@ -238,6 +242,29 @@ class SettingsService {
           normalized === 'enabled';
         await db.setAppSettingAsync(key, isEnabled ? '1' : '0');
         log.success(`Player self‑registration ${isEnabled ? 'enabled' : 'disabled'}`);
+        return;
+      }
+
+      if (key === 'webcams_enabled') {
+        const normalized = trimmed.toLowerCase();
+        const isEnabled =
+          normalized === '1' ||
+          normalized === 'true' ||
+          normalized === 'yes' ||
+          normalized === 'on' ||
+          normalized === 'enabled';
+        await db.setAppSettingAsync(key, isEnabled ? '1' : '0');
+        log.success(`Player webcams ${isEnabled ? 'enabled' : 'disabled'}`);
+        return;
+      }
+
+      if (key === 'webcam_delay_seconds') {
+        const parsed = Number(trimmed);
+        if (!Number.isInteger(parsed) || parsed < 0 || parsed > 600) {
+          throw new Error('webcam_delay_seconds must be an integer from 0 to 600');
+        }
+        await db.setAppSettingAsync(key, String(parsed));
+        log.success(`Player webcam HUD delay updated to ${parsed}`);
         return;
       }
 

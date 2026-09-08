@@ -53,6 +53,7 @@ import testRoutes from './routes/test';
 import authRoutes from './routes/auth';
 import matchzyRoutes from './routes/matchzy';
 import hudIntegrationRoutes from './routes/hudIntegration';
+import webcamRoutes from './routes/webcams';
 import { initMatchZyVersionService } from './services/matchzyVersionService';
 import { recoverActiveMatches } from './services/matchRecoveryService';
 import { matchAllocationService } from './services/matchAllocationService';
@@ -412,6 +413,7 @@ app.use('/api/test', testRoutes); // Test utilities (log markers, etc.)
 app.use('/api/auth', authRoutes); // Authentication (Steam, Keycloak, Discord)
 app.use('/api/matchzy', matchzyRoutes); // MatchZy Enhanced version info
 app.use('/api/integrations/jts-hud', hudIntegrationRoutes); // Read-only broadcast projection
+app.use('/api/webcams', webcamRoutes);
 
 // Serve frontend at /app (built client lives under api/public)
 const publicPath = path.join(__dirname, '..', 'public');

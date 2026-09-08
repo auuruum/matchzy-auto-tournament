@@ -21,6 +21,8 @@ export interface PlayerRecord {
   openskill_mu: number;
   openskill_sigma: number;
   match_count: number;
+  webcam_enabled?: number;
+  webcam_blocked?: number;
   created_at: number;
   updated_at: number;
 }
@@ -65,6 +67,8 @@ export interface PlayerResponse {
   updatedAt: number;
   isAdmin?: boolean;
   isSpectator?: boolean;
+  webcamEnabled?: boolean;
+  webcamBlocked?: boolean;
 }
 
 class PlayerService {
@@ -106,6 +110,8 @@ class PlayerService {
       updatedAt: player.updated_at,
       isAdmin: (player as unknown as { is_admin?: number | boolean }).is_admin === 1,
       isSpectator: (player as unknown as { is_spectator?: number | boolean }).is_spectator === 1,
+      webcamEnabled: player.webcam_enabled === 1,
+      webcamBlocked: player.webcam_blocked === 1,
     };
   }
 
