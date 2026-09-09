@@ -33,6 +33,7 @@ import { DEFAULT_BRANDING } from '../contexts/BrandingContext';
 import { BrandLogo } from '../components/common/BrandLogo';
 import { useIsDevelopment } from '../hooks/useIsDevelopment';
 import { useTranslation } from 'react-i18next';
+import { PlayerCameraSettings } from '../components/admin/PlayerCameraSettings';
 
 declare const __APP_VERSION__: string | undefined;
 
@@ -1094,6 +1095,8 @@ export default function Settings() {
                 </Box>
 
                 <Divider />
+
+                <PlayerCameraSettings />
 
               </Stack>
             </TabPanel>

@@ -39,6 +39,7 @@ import { TopNavBar } from '../components/layout/TopNavBar';
 import { TournamentRulesAccordion } from '../components/tournament/TournamentRulesAccordion';
 import { PlayerAvatar } from '../components/player/PlayerAvatar';
 import { PlayerName } from '../components/player/PlayerName';
+import { PlayerCameraCard } from '../components/player/PlayerCameraCard';
 import type { PlayerDetail } from '../types/api.types';
 import { useAuth } from '../contexts/AuthContext';
 import { useCurrentMatchStatus } from '../hooks/useCurrentMatchStatus';
@@ -1105,6 +1106,8 @@ export default function PlayerProfile() {
               </Box>
             </CardContent>
           </Card>
+
+          <PlayerCameraCard profileSteamId={steamId || ''} />
 
           {currentMatch && (
             <TournamentRulesAccordion
