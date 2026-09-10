@@ -17,6 +17,8 @@ type PlayerCameraContextValue = {
   error: string;
   peerCount: number;
   stream: MediaStream | null;
+  previewStream: MediaStream | null;
+  preparePreview: (deviceId?: string) => Promise<void>;
   start: (testPattern: boolean) => Promise<void>;
   stop: (message?: string) => void;
 };
@@ -58,9 +60,11 @@ export function PlayerCameraProvider({ children }: { children: React.ReactNode }
   const [error, setError] = React.useState('');
   const [peerCount, setPeerCount] = React.useState(0);
   const [stream, setStream] = React.useState<MediaStream | null>(null);
+  const [previewStream, setPreviewStream] = React.useState<MediaStream | null>(null);
   const configRef = React.useRef<PlayerCameraConfig | null>(null);
   const socketRef = React.useRef<Socket | null>(null);
   const streamRef = React.useRef<MediaStream | null>(null);
+  const previewStreamRef = React.useRef<MediaStream | null>(null);
   const stopSourceRef = React.useRef<(() => void) | null>(null);
   const peersRef = React.useRef(new Map<string, RTCPeerConnection>());
   const recorderRef = React.useRef<MediaRecorder | null>(null);
@@ -92,6 +96,9 @@ export function PlayerCameraProvider({ children }: { children: React.ReactNode }
     stopSourceRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    previewStreamRef.current?.getTracks().forEach((track) => track.stop());
+    previewStreamRef.current = null;
+    setPreviewStream(null);
     setStream(null);
     setActive(false);
     if (message) setError(message);
@@ -99,18 +106,52 @@ export function PlayerCameraProvider({ children }: { children: React.ReactNode }
 
   React.useEffect(() => () => stop(), [stop]);
 
+  const preparePreview = React.useCallback(async (deviceId?: string) => {
+    const currentConfig = configRef.current;
+    if (!currentConfig?.enabled || !playerSteamId || streamRef.current) return;
+    previewStreamRef.current?.getTracks().forEach((track) => track.stop());
+    previewStreamRef.current = null;
+    setPreviewStream(null);
+    setError('');
+    try {
+      const nextPreview = await navigator.mediaDevices.getUserMedia({
+        video: {
+          ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30, max: 30 },
+        },
+        audio: false,
+      });
+      previewStreamRef.current = nextPreview;
+      setPreviewStream(nextPreview);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not preview camera');
+    }
+  }, [playerSteamId]);
+
   const start = React.useCallback(async (testPattern: boolean) => {
     const currentConfig = configRef.current;
     if (!currentConfig || !currentConfig.enabled || !playerSteamId || streamRef.current) return;
     setError('');
     try {
       const test = testPattern ? createTestPattern() : null;
-      const nextStream = test?.stream ||
+      const prepared = testPattern ? null : previewStreamRef.current;
+      if (testPattern) {
+        previewStreamRef.current?.getTracks().forEach((track) => track.stop());
+        previewStreamRef.current = null;
+        setPreviewStream(null);
+      }
+      const nextStream = test?.stream || prepared ||
         (await navigator.mediaDevices.getUserMedia({
           video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } },
           audio: false,
         }));
       streamRef.current = nextStream;
+      if (prepared) {
+        previewStreamRef.current = null;
+        setPreviewStream(null);
+      }
       stopSourceRef.current = test?.stop || null;
       setStream(nextStream);
 
@@ -211,12 +252,14 @@ export function PlayerCameraProvider({ children }: { children: React.ReactNode }
     }
   }, [playerSteamId, stop]);
 
-  const value = React.useMemo(() => ({ config, active, error, peerCount, stream, start, stop }), [
+  const value = React.useMemo(() => ({ config, active, error, peerCount, stream, previewStream, preparePreview, start, stop }), [
     config,
     active,
     error,
     peerCount,
     stream,
+    previewStream,
+    preparePreview,
     start,
     stop,
   ]);
@@ -236,23 +279,23 @@ export function usePlayerCamera(): PlayerCameraContextValue {
 }
 
 function PlayerCameraStatusDock() {
-  const { active, peerCount, stop } = usePlayerCamera();
+  const { active, peerCount, previewStream, stop } = usePlayerCamera();
 
-  if (!active) return null;
+  if (!active && !previewStream) return null;
   return (
     <Card sx={{ position: 'fixed', right: 20, bottom: 20, zIndex: 1300, width: 280, p: 1.25, boxShadow: 8 }}>
       <Stack spacing={1}>
         <Box display="flex" alignItems="center" justifyContent="space-between" gap={1}>
           <Typography variant="subtitle2" fontWeight={700}>Player camera</Typography>
-          <Chip size="small" color="success" icon={<VideocamIcon />} label="Live" />
+          <Chip size="small" color={active ? 'success' : 'warning'} icon={<VideocamIcon />} label={active ? 'Live' : 'Preview'} />
         </Box>
-        <Box display="flex" alignItems="center" gap={1.5} sx={{ px: 1, py: 1.5, bgcolor: 'rgba(76, 175, 80, .12)', borderRadius: 1 }}>
+        <Box display="flex" alignItems="center" gap={1.5} sx={{ px: 1, py: 1.5, bgcolor: active ? 'rgba(76, 175, 80, .12)' : 'rgba(255, 152, 0, .12)', borderRadius: 1 }}>
           <VideocamIcon color="success" />
-          <Typography variant="body2">Your camera is sending video</Typography>
+          <Typography variant="body2">{active ? 'Your camera is sending video' : 'Preview only — nothing is sent'}</Typography>
         </Box>
         <Box display="flex" alignItems="center" justifyContent="space-between" gap={1}>
           <Typography variant="caption" color="text.secondary">
-            Continues while browsing MAT · {peerCount} viewer{peerCount === 1 ? '' : 's'}
+            {active ? `Continues while browsing MAT · ${peerCount} viewer${peerCount === 1 ? '' : 's'}` : 'Choose Enable camera when ready'}
           </Typography>
           <Button size="small" color="error" onClick={() => stop()}>Stop</Button>
         </Box>

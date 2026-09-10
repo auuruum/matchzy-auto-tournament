@@ -1,4 +1,4 @@
-/* global HTMLVideoElement */
+/* global HTMLVideoElement, MediaDeviceInfo */
 import React from 'react';
 import {
   Alert,
@@ -7,7 +7,9 @@ import {
   Card,
   CardContent,
   Chip,
+  MenuItem,
   Stack,
+  TextField,
   Typography,
 } from '@mui/material';
 import VideocamIcon from '@mui/icons-material/Videocam';
@@ -17,16 +19,51 @@ import { usePlayerCamera } from '../../contexts/PlayerCameraContext';
 
 export function PlayerCameraCard({ profileSteamId }: { profileSteamId: string }) {
   const { playerSteamId, impersonation } = useAuth();
-  const { config, active, error, peerCount, stream, start, stop } = usePlayerCamera();
+  const { config, active, error, peerCount, stream, previewStream, preparePreview, start, stop } = usePlayerCamera();
   const previewRef = React.useRef<HTMLVideoElement>(null);
+  const [devices, setDevices] = React.useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = React.useState(() =>
+    typeof window === 'undefined' ? '' : window.localStorage.getItem('mat-player-camera-device') || ''
+  );
+
+  const refreshDevices = React.useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    const allDevices = await navigator.mediaDevices.enumerateDevices();
+    const cameras = allDevices.filter((device) => device.kind === 'videoinput');
+    setDevices(cameras);
+    if (selectedDeviceId && !cameras.some((device) => device.deviceId === selectedDeviceId)) {
+      setSelectedDeviceId('');
+      window.localStorage.removeItem('mat-player-camera-device');
+    }
+  }, [selectedDeviceId]);
+
+  React.useEffect(() => {
+    void refreshDevices();
+    const mediaDevices = navigator.mediaDevices;
+    mediaDevices?.addEventListener('devicechange', refreshDevices);
+    return () => mediaDevices?.removeEventListener('devicechange', refreshDevices);
+  }, [refreshDevices]);
+
+  const selectDevice = (deviceId: string) => {
+    setSelectedDeviceId(deviceId);
+    if (deviceId) window.localStorage.setItem('mat-player-camera-device', deviceId);
+    else window.localStorage.removeItem('mat-player-camera-device');
+    if (previewStream) void preparePreview(deviceId || undefined);
+  };
+
+  const previewSelectedCamera = async () => {
+    await preparePreview(selectedDeviceId || undefined);
+    void refreshDevices();
+  };
 
   React.useEffect(() => {
     const video = previewRef.current;
     if (!video) return;
-    video.srcObject = stream;
-    if (stream) void video.play().catch(() => undefined);
+    const nextStream = previewStream || stream;
+    video.srcObject = nextStream;
+    if (nextStream) void video.play().catch(() => undefined);
     return () => { video.srcObject = null; };
-  }, [stream]);
+  }, [previewStream, stream]);
 
   if (!config?.enabled || playerSteamId !== profileSteamId) return null;
 
@@ -45,6 +82,23 @@ export function PlayerCameraCard({ profileSteamId }: { profileSteamId: string })
           </Box>
           {impersonation && <Alert severity="info">Debug: publishing as {profileSteamId} through View as player.</Alert>}
           {error && <Alert severity="error">{error}</Alert>}
+          <TextField
+            select
+            fullWidth
+            size="small"
+            label="Webcam"
+            value={selectedDeviceId}
+            onChange={(event) => selectDevice(event.target.value)}
+            disabled={active}
+            helperText={active ? 'Stop the camera to change the selected device.' : previewStream ? 'Preview only — nothing is sent to MAT yet.' : 'Select a camera, then preview it before publishing.'}
+          >
+            <MenuItem value="">Default camera</MenuItem>
+            {devices.map((device, index) => (
+              <MenuItem key={device.deviceId} value={device.deviceId}>
+                {device.label || `Camera ${index + 1}`}
+              </MenuItem>
+            ))}
+          </TextField>
           <Box
             component="video"
             ref={previewRef}
@@ -56,9 +110,15 @@ export function PlayerCameraCard({ profileSteamId }: { profileSteamId: string })
           <Box display="flex" gap={1} flexWrap="wrap">
             {!active ? (
               <>
-                <Button variant="contained" startIcon={<VideocamIcon />} onClick={() => void start(false)}>
-                  Enable camera
-                </Button>
+                {previewStream ? (
+                  <Button variant="contained" startIcon={<VideocamIcon />} onClick={() => void start(false)}>
+                    Enable camera
+                  </Button>
+                ) : (
+                  <Button variant="contained" startIcon={<VideocamIcon />} onClick={() => void previewSelectedCamera()}>
+                    Preview camera
+                  </Button>
+                )}
                 <Button variant="outlined" startIcon={<ScienceIcon />} onClick={() => void start(true)}>
                   Test pattern
                 </Button>
