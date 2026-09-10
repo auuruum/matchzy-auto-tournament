@@ -134,11 +134,41 @@ export function PlayerCameraCard({ profileSteamId }: { profileSteamId: string })
         await peer.setLocalDescription(offer);
         socket.emit('camera:offer', { hudId, viewerId, description: peer.localDescription });
       });
+      socket.on('camera:create-admin-peer', async ({ adminId, steamId }: { adminId: string; steamId: string }) => {
+        const key = `admin:${adminId}:${steamId}`;
+        peersRef.current.get(key)?.close();
+        const peer = new RTCPeerConnection({ iceServers: config.iceServers });
+        peersRef.current.set(key, peer);
+        setPeerCount(peersRef.current.size);
+        stream.getVideoTracks().forEach((track) => peer.addTrack(track, stream));
+        peer.onicecandidate = (event) => {
+          if (event.candidate) socket.emit('camera:admin-ice-from-player', { adminId, steamId, candidate: event.candidate });
+        };
+        peer.onconnectionstatechange = () => {
+          if (['failed', 'closed', 'disconnected'].includes(peer.connectionState)) {
+            peer.close();
+            peersRef.current.delete(key);
+            setPeerCount(peersRef.current.size);
+          }
+        };
+        const offer = await peer.createOffer();
+        await peer.setLocalDescription(offer);
+        socket.emit('camera:admin-offer', { adminId, steamId, description: peer.localDescription });
+      });
+
       socket.on('camera:answer', async ({ hudId, viewerId, description }) => {
         await peersRef.current.get(`${hudId}:${viewerId}`)?.setRemoteDescription(description);
       });
+      socket.on('camera:admin-answer', async ({ adminId, steamId, description }) => {
+        await peersRef.current.get(`admin:${adminId}:${steamId}`)?.setRemoteDescription(description);
+      });
+
       socket.on('camera:ice-from-hud', async ({ hudId, viewerId, candidate }) => {
         await peersRef.current.get(`${hudId}:${viewerId}`)?.addIceCandidate(candidate).catch(() => undefined);
+      });
+
+      socket.on('camera:admin-ice-from-admin', async ({ adminId, steamId, candidate }) => {
+        await peersRef.current.get(`admin:${adminId}:${steamId}`)?.addIceCandidate(candidate).catch(() => undefined);
       });
 
       await new Promise<void>((resolve, reject) => {

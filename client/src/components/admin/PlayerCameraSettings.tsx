@@ -1,4 +1,7 @@
+/* global RTCIceServer */
 import React from 'react';
+import { AdminPlayerCameraPreviews } from './AdminPlayerCameraPreviews';
+
 import {
   Alert,
   Box,
@@ -19,6 +22,8 @@ type Status = {
   publishers: string[];
   blockedSteamIds: string[];
   huds: number;
+  adminViewers?: number;
+  iceServers: RTCIceServer[];
 };
 
 async function readError(response: Response): Promise<string> {
@@ -100,14 +105,15 @@ export function PlayerCameraSettings() {
         </Select>
         <Chip label={`${status.publishers.length} live`} color={status.publishers.length ? 'success' : 'default'} />
         <Chip label={`${status.huds} HUD connection${status.huds === 1 ? '' : 's'}`} variant="outlined" />
+        <Chip label={`${status.adminViewers || 0} admin preview${status.adminViewers === 1 ? '' : 's'}`} variant="outlined" />
       </Box>
       {status.transport === 'relay' && (
         <Alert severity="warning">Relay sends video through MAT Socket.IO. Use only when P2P fails; server bandwidth grows per HUD.</Alert>
       )}
       <Box>
         <Typography variant="subtitle2" gutterBottom>Active cameras</Typography>
-        <Box display="flex" gap={1} flexWrap="wrap">
-          {status.publishers.length === 0 && <Typography variant="body2" color="text.secondary">None</Typography>}
+        <AdminPlayerCameraPreviews steamIds={status.publishers} transport={status.transport} iceServers={status.iceServers || []} />
+        <Box display="flex" gap={1} flexWrap="wrap" mt={1.5}>
           {status.publishers.map((id) => (
             <Button key={id} size="small" color="error" variant="outlined" onClick={() => void block(id, true).catch((caught) => setError(String(caught)))}>
               Disable {id}

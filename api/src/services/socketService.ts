@@ -17,6 +17,7 @@ let io: SocketIOServer | null = null;
 let hudNamespace: ReturnType<SocketIOServer['of']> | null = null;
 const cameraPublishers = new Map<string, Socket>();
 const cameraHudWatchers = new Map<string, Map<string, string>>();
+const cameraAdminWatchers = new Map<string, Set<string>>();
 const cameraRelayInitChunks = new Map<
   string,
   { chunk: Buffer | ArrayBuffer; mimeType?: string; sequence?: number }
@@ -42,6 +43,10 @@ async function emitCameraState(): Promise<void> {
 
 function requestCameraPeer(hudId: string, viewerId: string, steamId: string): void {
   cameraPublishers.get(steamId)?.emit('camera:create-peer', { hudId, viewerId });
+}
+
+function requestAdminCameraPeer(adminId: string, steamId: string): void {
+  cameraPublishers.get(steamId)?.emit('camera:create-admin-peer', { adminId, steamId });
 }
 
 function registerPlayerCameraSocket(socket: Socket): void {
@@ -93,6 +98,22 @@ function registerPlayerCameraSocket(socket: Socket): void {
     hudNamespace?.to(hudId).emit('camera:ice-from-player', { viewerId, steamId, candidate });
   });
 
+  socket.on('camera:admin-offer', async (payload: { adminId?: string; steamId?: string; description?: unknown }) => {
+    const steamId = (await identityPromise)?.effectiveSteamId || null;
+    const { adminId, description } = payload || {};
+    if (!steamId || cameraPublishers.get(steamId)?.id !== socket.id || !adminId || !description) return;
+    if (!cameraAdminWatchers.get(adminId)?.has(steamId)) return;
+    io?.to(adminId).emit('camera:admin-offer', { adminId, steamId, description });
+  });
+
+  socket.on('camera:admin-ice-from-player', async (payload: { adminId?: string; steamId?: string; candidate?: unknown }) => {
+    const steamId = (await identityPromise)?.effectiveSteamId || null;
+    const { adminId, candidate } = payload || {};
+    if (!steamId || cameraPublishers.get(steamId)?.id !== socket.id || !adminId || !candidate) return;
+    if (!cameraAdminWatchers.get(adminId)?.has(steamId)) return;
+    io?.to(adminId).emit('camera:admin-ice-from-player', { adminId, steamId, candidate });
+  });
+
   socket.on('camera:relay-chunk', async (payload: { chunk?: Buffer | ArrayBuffer; mimeType?: string; sequence?: number }) => {
     const steamId = (await identityPromise)?.effectiveSteamId || null;
     if (!steamId || cameraPublishers.get(steamId)?.id !== socket.id) return;
@@ -121,6 +142,17 @@ function registerPlayerCameraSocket(socket: Socket): void {
         }
       }
     }
+    for (const [adminId, watched] of cameraAdminWatchers) {
+      if (watched.has(steamId)) {
+        io?.to(adminId).emit('camera:admin-relay-chunk', {
+          adminId,
+          steamId,
+          chunk,
+          mimeType: payload.mimeType,
+          sequence: payload.sequence,
+        });
+      }
+    }
   });
 
   const stopPublishing = async () => {
@@ -129,11 +161,59 @@ function registerPlayerCameraSocket(socket: Socket): void {
       cameraPublishers.delete(steamId);
       cameraRelayInitChunks.delete(steamId);
       hudNamespace?.emit('camera:player-stopped', { steamId });
+      for (const adminId of cameraAdminWatchers.keys()) {
+        io?.to(adminId).emit('camera:admin-stopped', { steamId });
+      }
       await emitCameraState();
     }
   };
   socket.on('camera:stop', stopPublishing);
   socket.on('disconnect', stopPublishing);
+}
+
+
+function registerAdminCameraSocket(socket: Socket): void {
+  const identityPromise = resolveViewerIdentity(
+    socket.request as unknown as Parameters<typeof resolveViewerIdentity>[0]
+  ).catch(() => null);
+  socket.on('camera:admin-watch', async (payload: { steamId?: string | null }) => {
+    const identity = await identityPromise;
+    if (!identity?.isRealAdmin) return;
+    const watched = cameraAdminWatchers.get(socket.id) || new Set<string>();
+    cameraAdminWatchers.set(socket.id, watched);
+    const steamId = payload?.steamId?.trim() || null;
+    if (!steamId) {
+      watched.clear();
+      return;
+    }
+    watched.add(steamId);
+    const policy = await getPlayerCameraPolicy();
+    if (!policy.enabled || policy.blockedSteamIds.includes(steamId)) return;
+    if (policy.transport === 'p2p') {
+      requestAdminCameraPeer(socket.id, steamId);
+    } else {
+      const initialChunk = cameraRelayInitChunks.get(steamId);
+      if (initialChunk) socket.emit('camera:admin-relay-chunk', { adminId: socket.id, steamId, ...initialChunk });
+    }
+  });
+
+  socket.on('camera:admin-answer', async (payload: { adminId?: string; steamId?: string; description?: unknown }) => {
+    const identity = await identityPromise;
+    const { adminId, steamId, description } = payload || {};
+    if (!identity?.isRealAdmin || adminId !== socket.id || !steamId || !description) return;
+    if (!cameraAdminWatchers.get(socket.id)?.has(steamId)) return;
+    cameraPublishers.get(steamId)?.emit('camera:admin-answer', { adminId, steamId, description });
+  });
+
+  socket.on('camera:admin-ice-from-admin', async (payload: { adminId?: string; steamId?: string; candidate?: unknown }) => {
+    const identity = await identityPromise;
+    const { adminId, steamId, candidate } = payload || {};
+    if (!identity?.isRealAdmin || adminId !== socket.id || !steamId || !candidate) return;
+    if (!cameraAdminWatchers.get(socket.id)?.has(steamId)) return;
+    cameraPublishers.get(steamId)?.emit('camera:admin-ice-from-admin', { adminId, steamId, candidate });
+  });
+
+  socket.on('disconnect', () => cameraAdminWatchers.delete(socket.id));
 }
 
 function registerHudCameraSocket(socket: Socket): void {
@@ -181,6 +261,7 @@ export async function getPlayerCameraRuntimeStatus() {
     ...policy,
     publishers: [...cameraPublishers.keys()],
     huds: cameraHudWatchers.size,
+    adminViewers: cameraAdminWatchers.size,
   };
 }
 
@@ -212,6 +293,7 @@ export function initializeSocket(httpServer: HTTPServer): SocketIOServer {
   io.on('connection', (socket) => {
     log.debug(`Socket client connected: ${socket.id}`);
     registerPlayerCameraSocket(socket);
+    registerAdminCameraSocket(socket);
 
     socket.on('disconnect', () => {
       log.debug(`Socket client disconnected: ${socket.id}`);
