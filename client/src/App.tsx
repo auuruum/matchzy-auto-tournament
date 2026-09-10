@@ -2,6 +2,7 @@ import React from 'react';
 import { Box } from '@mui/material';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { PlayerCameraProvider } from './contexts/PlayerCameraContext';
 import { PageHeaderProvider } from './contexts/PageHeaderContext';
 import { SnackbarProvider, useSnackbar } from './contexts/SnackbarContext';
 import Login from './pages/Login';
@@ -249,12 +250,14 @@ function AppRoutes() {
 function AuthenticatedApp() {
   return (
     <AuthProvider>
-      <SnackbarProvider>
-        <PageHeaderProvider>
-          <ImpersonationBanner />
-          <AppRoutes />
-        </PageHeaderProvider>
-      </SnackbarProvider>
+      <PlayerCameraProvider>
+        <SnackbarProvider>
+          <PageHeaderProvider>
+            <ImpersonationBanner />
+            <AppRoutes />
+          </PageHeaderProvider>
+        </SnackbarProvider>
+      </PlayerCameraProvider>
     </AuthProvider>
   );
 }
