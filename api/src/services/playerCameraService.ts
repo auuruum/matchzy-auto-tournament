@@ -10,6 +10,7 @@ export type PlayerCameraIceServer = {
 export interface PlayerCameraPolicy {
   enabled: boolean;
   transport: PlayerCameraTransport;
+  prewarmEnabled: boolean;
   blockedSteamIds: string[];
   iceServers: PlayerCameraIceServer[];
 }
@@ -17,6 +18,7 @@ export interface PlayerCameraPolicy {
 const ENABLED_KEY = 'player_cameras_enabled';
 const TRANSPORT_KEY = 'player_cameras_transport';
 const BLOCKED_KEY = 'player_cameras_blocked';
+const PREWARM_KEY = 'player_cameras_prewarm';
 
 function parseBlocked(value: string | null): string[] {
   try {
@@ -43,14 +45,16 @@ function iceServers(): PlayerCameraIceServer[] {
 }
 
 export async function getPlayerCameraPolicy(): Promise<PlayerCameraPolicy> {
-  const [enabled, transport, blocked] = await Promise.all([
+  const [enabled, transport, prewarm, blocked] = await Promise.all([
     db.getAppSettingAsync(ENABLED_KEY),
     db.getAppSettingAsync(TRANSPORT_KEY),
+    db.getAppSettingAsync(PREWARM_KEY),
     db.getAppSettingAsync(BLOCKED_KEY),
   ]);
   return {
     enabled: enabled === '1',
     transport: transport === 'relay' ? 'relay' : 'p2p',
+    prewarmEnabled: prewarm !== '0',
     blockedSteamIds: parseBlocked(blocked),
     iceServers: iceServers(),
   };
@@ -59,9 +63,13 @@ export async function getPlayerCameraPolicy(): Promise<PlayerCameraPolicy> {
 export async function updatePlayerCameraPolicy(input: {
   enabled?: boolean;
   transport?: PlayerCameraTransport;
+  prewarmEnabled?: boolean;
 }): Promise<PlayerCameraPolicy> {
   if (input.enabled !== undefined) {
     await db.setAppSettingAsync(ENABLED_KEY, input.enabled ? '1' : '0');
+  }
+  if (input.prewarmEnabled !== undefined) {
+    await db.setAppSettingAsync(PREWARM_KEY, input.prewarmEnabled ? '1' : '0');
   }
   if (input.transport !== undefined) {
     if (input.transport !== 'p2p' && input.transport !== 'relay') {

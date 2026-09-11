@@ -16,7 +16,11 @@ import { getPlayerCameraPolicy } from './playerCameraService';
 let io: SocketIOServer | null = null;
 let hudNamespace: ReturnType<SocketIOServer['of']> | null = null;
 const cameraPublishers = new Map<string, Socket>();
-const cameraHudWatchers = new Map<string, Map<string, string>>();
+type CameraQuality = 'preview' | 'full';
+
+type HudCameraWatches = Map<string, CameraQuality>;
+
+const cameraHudWatchers = new Map<string, Map<string, HudCameraWatches>>();
 const cameraAdminWatchers = new Map<string, Set<string>>();
 const cameraRelayInitChunks = new Map<
   string,
@@ -28,6 +32,7 @@ async function cameraState() {
   return {
     enabled: policy.enabled,
     transport: policy.transport,
+    prewarmEnabled: policy.prewarmEnabled,
     iceServers: policy.iceServers,
     availablePlayers: policy.enabled
       ? [...cameraPublishers.keys()].filter((id) => !policy.blockedSteamIds.includes(id))
@@ -41,8 +46,8 @@ async function emitCameraState(): Promise<void> {
   io?.emit('camera:policy', state);
 }
 
-function requestCameraPeer(hudId: string, viewerId: string, steamId: string): void {
-  cameraPublishers.get(steamId)?.emit('camera:create-peer', { hudId, viewerId });
+function requestCameraPeer(hudId: string, viewerId: string, steamId: string, quality: CameraQuality = 'full'): void {
+  cameraPublishers.get(steamId)?.emit('camera:create-peer', { hudId, viewerId, steamId, quality });
 }
 
 function requestAdminCameraPeer(adminId: string, steamId: string): void {
@@ -79,8 +84,9 @@ function registerPlayerCameraSocket(socket: Socket): void {
 
     if (policy.transport === 'p2p') {
       for (const [hudId, viewers] of cameraHudWatchers) {
-        for (const [viewerId, watchedSteamId] of viewers) {
-          if (watchedSteamId === steamId) requestCameraPeer(hudId, viewerId, steamId);
+        for (const [viewerId, watches] of viewers) {
+          const quality = watches.get(steamId);
+          if (quality) requestCameraPeer(hudId, viewerId, steamId, quality);
         }
       }
     }
@@ -90,7 +96,7 @@ function registerPlayerCameraSocket(socket: Socket): void {
     const steamId = (await identityPromise)?.effectiveSteamId || null;
     if (!steamId || cameraPublishers.get(steamId)?.id !== socket.id) return;
     const { hudId, viewerId, description } = payload || {};
-    if (!hudId || !viewerId || !description || cameraHudWatchers.get(hudId)?.get(viewerId) !== steamId) return;
+    if (!hudId || !viewerId || !description || !cameraHudWatchers.get(hudId)?.get(viewerId)?.has(steamId)) return;
     hudNamespace?.to(hudId).emit('camera:offer', { viewerId, steamId, description });
   });
 
@@ -98,7 +104,7 @@ function registerPlayerCameraSocket(socket: Socket): void {
     const steamId = (await identityPromise)?.effectiveSteamId || null;
     if (!steamId || cameraPublishers.get(steamId)?.id !== socket.id) return;
     const { hudId, viewerId, candidate } = payload || {};
-    if (!hudId || !viewerId || !candidate || cameraHudWatchers.get(hudId)?.get(viewerId) !== steamId) return;
+    if (!hudId || !viewerId || !candidate || !cameraHudWatchers.get(hudId)?.get(viewerId)?.has(steamId)) return;
     hudNamespace?.to(hudId).emit('camera:ice-from-player', { viewerId, steamId, candidate });
   });
 
@@ -134,8 +140,8 @@ function registerPlayerCameraSocket(socket: Socket): void {
       });
     }
     for (const [hudId, viewers] of cameraHudWatchers) {
-      for (const [viewerId, watchedSteamId] of viewers) {
-        if (watchedSteamId === steamId) {
+      for (const [viewerId, watches] of viewers) {
+        if (watches.get(steamId) === 'full') {
           hudNamespace?.to(hudId).emit('camera:relay-chunk', {
             viewerId,
             steamId,
@@ -224,48 +230,105 @@ function registerHudCameraSocket(socket: Socket): void {
   cameraHudWatchers.set(socket.id, new Map());
   void cameraState().then((state) => socket.emit('camera:state', state));
 
-  socket.on('camera:hud-watch', async (payload: { viewerId?: string; steamId?: string | null }) => {
-    const viewerId = payload?.viewerId?.trim();
-    if (!viewerId) return;
+  const updateHudWatches = async (
+    viewerId: string,
+    steamIds: string[],
+    selectedSteamId: string | null
+  ) => {
     const watchers = cameraHudWatchers.get(socket.id);
     if (!watchers) return;
-    const steamId = payload?.steamId?.trim();
-    const previousSteamId = watchers.get(viewerId);
-    if (!steamId) {
-      if (previousSteamId) stopHudCameraViewer(socket.id, viewerId, previousSteamId);
+    const ids = Array.from(new Set(steamIds.filter(Boolean))).slice(0, 10);
+    const next = new Map<string, CameraQuality>(
+      ids.map((steamId) => [steamId, steamId === selectedSteamId ? 'full' : 'preview'])
+    );
+    const previous = watchers.get(viewerId) || new Map<string, CameraQuality>();
+    for (const steamId of previous.keys()) {
+      if (!next.has(steamId)) stopHudCameraViewer(socket.id, viewerId, steamId);
+    }
+    if (next.size === 0) {
       watchers.delete(viewerId);
       return;
     }
-    if (previousSteamId && previousSteamId !== steamId) {
-      stopHudCameraViewer(socket.id, viewerId, previousSteamId);
-    }
-    watchers.set(viewerId, steamId);
+    watchers.set(viewerId, next);
     const policy = await getPlayerCameraPolicy();
-    if (policy.enabled && policy.transport === 'p2p' && !policy.blockedSteamIds.includes(steamId)) {
-      requestCameraPeer(socket.id, viewerId, steamId);
-    } else if (policy.enabled && policy.transport === 'relay' && !policy.blockedSteamIds.includes(steamId)) {
-      const initialChunk = cameraRelayInitChunks.get(steamId);
-      if (initialChunk) socket.emit('camera:relay-chunk', { viewerId, steamId, ...initialChunk });
+    if (!policy.enabled) return;
+    for (const [steamId, quality] of next) {
+      if (policy.blockedSteamIds.includes(steamId)) continue;
+      const previousQuality = previous.get(steamId);
+      if (policy.transport === 'p2p') {
+        if (!previousQuality) requestCameraPeer(socket.id, viewerId, steamId, quality);
+        else if (previousQuality !== quality) {
+          cameraPublishers.get(steamId)?.emit('camera:set-quality', {
+            hudId: socket.id,
+            viewerId,
+            steamId,
+            quality,
+          });
+        }
+      } else if (quality === 'full') {
+        const initialChunk = cameraRelayInitChunks.get(steamId);
+        if (initialChunk) socket.emit('camera:relay-chunk', { viewerId, steamId, ...initialChunk });
+      }
     }
+  };
+
+  socket.on(
+    'camera:hud-watch-list',
+    async (payload: { viewerId?: string; steamIds?: string[]; selectedSteamId?: string | null }) => {
+      const viewerId = payload?.viewerId?.trim();
+      if (!viewerId) return;
+      await updateHudWatches(
+        viewerId,
+        Array.isArray(payload.steamIds) ? payload.steamIds : [],
+        payload.selectedSteamId?.trim() || null
+      );
+    }
+  );
+
+  socket.on('camera:hud-watch', async (payload: { viewerId?: string; steamId?: string | null }) => {
+    const viewerId = payload?.viewerId?.trim();
+    if (!viewerId) return;
+    await updateHudWatches(viewerId, payload.steamId?.trim() ? [payload.steamId.trim()] : [], payload.steamId?.trim() || null);
   });
 
   socket.on('camera:answer', (payload: { viewerId?: string; steamId?: string; description?: unknown }) => {
     const { viewerId, steamId, description } = payload || {};
-    if (!viewerId || !steamId || !description || cameraHudWatchers.get(socket.id)?.get(viewerId) !== steamId) return;
-    cameraPublishers.get(steamId)?.emit('camera:answer', { hudId: socket.id, viewerId, description });
+    if (!viewerId || !steamId || !description || !cameraHudWatchers.get(socket.id)?.get(viewerId)?.has(steamId)) return;
+    cameraPublishers.get(steamId)?.emit('camera:answer', { hudId: socket.id, viewerId, steamId, description });
   });
 
   socket.on('camera:ice-from-hud', (payload: { viewerId?: string; steamId?: string; candidate?: unknown }) => {
     const { viewerId, steamId, candidate } = payload || {};
-    if (!viewerId || !steamId || !candidate || cameraHudWatchers.get(socket.id)?.get(viewerId) !== steamId) return;
-    cameraPublishers.get(steamId)?.emit('camera:ice-from-hud', { hudId: socket.id, viewerId, candidate });
+    if (!viewerId || !steamId || !candidate || !cameraHudWatchers.get(socket.id)?.get(viewerId)?.has(steamId)) return;
+    cameraPublishers.get(steamId)?.emit('camera:ice-from-hud', { hudId: socket.id, viewerId, steamId, candidate });
   });
+
+  socket.on(
+    'camera:set-quality',
+    async (payload: { viewerId?: string; steamId?: string; quality?: CameraQuality }) => {
+      const viewerId = payload?.viewerId?.trim();
+      const steamId = payload?.steamId?.trim();
+      const quality = payload?.quality;
+      if (!viewerId || !steamId || (quality !== 'preview' && quality !== 'full')) return;
+      const watches = cameraHudWatchers.get(socket.id)?.get(viewerId);
+      if (!watches?.has(steamId)) return;
+      if (watches.get(steamId) !== quality) watches.set(steamId, quality);
+      cameraPublishers.get(steamId)?.emit('camera:set-quality', {
+        hudId: socket.id,
+        viewerId,
+        steamId,
+        quality,
+      });
+    }
+  );
 
   socket.on('disconnect', () => {
     const watchers = cameraHudWatchers.get(socket.id);
     if (watchers) {
-      for (const [viewerId, steamId] of watchers) {
-        stopHudCameraViewer(socket.id, viewerId, steamId);
+      for (const [viewerId, watches] of watchers) {
+        for (const steamId of watches.keys()) {
+          stopHudCameraViewer(socket.id, viewerId, steamId);
+        }
       }
     }
     cameraHudWatchers.delete(socket.id);

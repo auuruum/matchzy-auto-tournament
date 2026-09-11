@@ -20,6 +20,7 @@ router.get('/config', async (_req: Request, res: Response) => {
   res.json({
     enabled: policy.enabled,
     transport: policy.transport,
+    prewarmEnabled: policy.prewarmEnabled,
     iceServers: policy.iceServers,
     secureContextRequired: true,
   });
@@ -47,7 +48,7 @@ router.get('/admin', requireAuth, async (_req: Request, res: Response) => {
 });
 
 router.put('/admin', requireAuth, async (req: Request, res: Response) => {
-  const body = (req.body || {}) as { enabled?: unknown; transport?: unknown };
+  const body = (req.body || {}) as { enabled?: unknown; transport?: unknown; prewarmEnabled?: unknown };
   if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
     res.status(400).json({ error: 'enabled must be a boolean' });
     return;
@@ -56,14 +57,20 @@ router.put('/admin', requireAuth, async (req: Request, res: Response) => {
     res.status(400).json({ error: 'transport must be p2p or relay' });
     return;
   }
+  if (body.prewarmEnabled !== undefined && typeof body.prewarmEnabled !== 'boolean') {
+    res.status(400).json({ error: 'prewarmEnabled must be a boolean' });
+    return;
+  }
   const policy = await updatePlayerCameraPolicy({
     enabled: body.enabled as boolean | undefined,
     transport: body.transport as PlayerCameraTransport | undefined,
+    prewarmEnabled: body.prewarmEnabled as boolean | undefined,
   });
-  await refreshPlayerCameraPolicy('Camera policy changed by administrator', true);
+  await refreshPlayerCameraPolicy('Camera policy changed by administrator', body.enabled !== undefined || body.transport !== undefined);
   log.info('Player camera policy updated', {
     enabled: policy.enabled,
     transport: policy.transport,
+    prewarmEnabled: policy.prewarmEnabled,
   });
   res.json(await getPlayerCameraRuntimeStatus());
 });

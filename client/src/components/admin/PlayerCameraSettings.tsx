@@ -19,6 +19,7 @@ import {
 type Status = {
   enabled: boolean;
   transport: 'p2p' | 'relay';
+  prewarmEnabled: boolean;
   publishers: string[];
   blockedSteamIds: string[];
   huds: number;
@@ -48,7 +49,7 @@ export function PlayerCameraSettings() {
     return () => window.clearInterval(timer);
   }, [refresh]);
 
-  const update = async (body: Partial<Pick<Status, 'enabled' | 'transport'>>) => {
+  const update = async (body: Partial<Pick<Status, 'enabled' | 'transport' | 'prewarmEnabled'>>) => {
     setError('');
     const response = await fetch('/api/player-cameras/admin', {
       method: 'PUT',
@@ -92,6 +93,16 @@ export function PlayerCameraSettings() {
           />
         }
         label="Enable player cameras globally"
+      />
+      <FormControlLabel
+        control={
+          <Switch
+            checked={status.prewarmEnabled}
+            disabled={status.transport === 'relay'}
+            onChange={(event) => void update({ prewarmEnabled: event.target.checked }).catch((caught) => setError(String(caught)))}
+          />
+        }
+        label="Prewarm player previews (P2P)"
       />
       <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
         <Typography variant="body2">Transport</Typography>

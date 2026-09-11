@@ -25,6 +25,16 @@ type PlayerCameraContextValue = {
 
 const PlayerCameraContext = React.createContext<PlayerCameraContextValue | undefined>(undefined);
 
+async function setPeerQuality(sender: RTCRtpSender, quality: 'preview' | 'full'): Promise<void> {
+  const parameters = sender.getParameters();
+  const encoding = parameters.encodings?.[0];
+  if (!encoding) return;
+  encoding.scaleResolutionDownBy = quality === 'preview' ? 2 : 1;
+  encoding.maxBitrate = quality === 'preview' ? 240_000 : 1_500_000;
+  encoding.maxFramerate = quality === 'preview' ? 12 : 30;
+  await sender.setParameters(parameters).catch(() => undefined);
+}
+
 function createTestPattern(label: string): { stream: MediaStream; stop: () => void } {
   const canvas = document.createElement('canvas');
   canvas.width = 1280;
@@ -69,6 +79,8 @@ export function PlayerCameraProvider({ children }: { children: React.ReactNode }
   const previewStreamRef = React.useRef<MediaStream | null>(null);
   const stopSourceRef = React.useRef<(() => void) | null>(null);
   const peersRef = React.useRef(new Map<string, RTCPeerConnection>());
+  const countViewers = () => new Set([...peersRef.current.keys()].map((key) => key.split(':').slice(0, 2).join(':'))).size;
+  const videoSendersRef = React.useRef(new Map<string, RTCRtpSender>());
   const pendingIceRef = React.useRef(new Map<string, RTCIceCandidateInit[]>());
   const recorderRef = React.useRef<MediaRecorder | null>(null);
 
@@ -94,6 +106,7 @@ export function PlayerCameraProvider({ children }: { children: React.ReactNode }
     recorderRef.current = null;
     peersRef.current.forEach((peer) => peer.close());
     peersRef.current.clear();
+    videoSendersRef.current.clear();
     pendingIceRef.current.clear();
     setPeerCount(0);
     stopSourceRef.current?.();
@@ -166,6 +179,7 @@ export function PlayerCameraProvider({ children }: { children: React.ReactNode }
         recorderRef.current = null;
         peersRef.current.forEach((peer) => peer.close());
         peersRef.current.clear();
+        videoSendersRef.current.clear();
         pendingIceRef.current.clear();
         setPeerCount(0);
       };
@@ -198,37 +212,59 @@ export function PlayerCameraProvider({ children }: { children: React.ReactNode }
         if (!policy.enabled) stop('Player cameras were disabled by administrator');
       });
 
-      socket.on('camera:create-peer', async ({ hudId, viewerId }: { hudId: string; viewerId: string }) => {
-        const key = `${hudId}:${viewerId}`;
-        peersRef.current.get(key)?.close();
-        const peer = new RTCPeerConnection({ iceServers: currentConfig.iceServers });
-        peersRef.current.set(key, peer);
-        pendingIceRef.current.set(key, []);
-        setPeerCount(peersRef.current.size);
-        nextStream.getVideoTracks().forEach((track) => peer.addTrack(track, nextStream));
-        peer.onicecandidate = (event) => {
-          if (event.candidate) socket.emit('camera:ice-from-player', { hudId, viewerId, candidate: event.candidate });
-        };
-        peer.onconnectionstatechange = () => {
-          if (['failed', 'closed'].includes(peer.connectionState) && peersRef.current.get(key) === peer) {
-            peer.close();
-            peersRef.current.delete(key);
-            pendingIceRef.current.delete(key);
-            setPeerCount(peersRef.current.size);
+      socket.on(
+        'camera:create-peer',
+        async ({
+          hudId,
+          viewerId,
+          steamId,
+          quality = 'preview',
+        }: {
+          hudId: string;
+          viewerId: string;
+          steamId: string;
+          quality?: 'preview' | 'full';
+        }) => {
+          const key = hudId + ':' + viewerId + ':' + steamId;
+          peersRef.current.get(key)?.close();
+          videoSendersRef.current.delete(key);
+          const peer = new RTCPeerConnection({ iceServers: currentConfig.iceServers });
+          peersRef.current.set(key, peer);
+          pendingIceRef.current.set(key, []);
+          setPeerCount(countViewers());
+          const track = nextStream.getVideoTracks()[0];
+          if (track) {
+            const sender = peer.addTrack(track, nextStream);
+            videoSendersRef.current.set(key, sender);
+            await setPeerQuality(sender, quality);
           }
-        };
-        const offer = await peer.createOffer();
-        await peer.setLocalDescription(offer);
-        if (peersRef.current.get(key) !== peer) return;
-        socket.emit('camera:offer', { hudId, viewerId, description: peer.localDescription });
-      });
+          peer.onicecandidate = (event) => {
+            if (event.candidate) {
+              socket.emit('camera:ice-from-player', { hudId, viewerId, steamId, candidate: event.candidate });
+            }
+          };
+          peer.onconnectionstatechange = () => {
+            if (['failed', 'closed'].includes(peer.connectionState) && peersRef.current.get(key) === peer) {
+              peer.close();
+              peersRef.current.delete(key);
+              videoSendersRef.current.delete(key);
+              pendingIceRef.current.delete(key);
+              setPeerCount(countViewers());
+            }
+          };
+          const offer = await peer.createOffer();
+          await peer.setLocalDescription(offer);
+          if (peersRef.current.get(key) !== peer) return;
+          socket.emit('camera:offer', { hudId, viewerId, steamId, description: peer.localDescription });
+        }
+      );
       socket.on('camera:create-admin-peer', async ({ adminId, steamId }: { adminId: string; steamId: string }) => {
         const key = `admin:${adminId}:${steamId}`;
         peersRef.current.get(key)?.close();
         const peer = new RTCPeerConnection({ iceServers: currentConfig.iceServers });
         peersRef.current.set(key, peer);
         pendingIceRef.current.set(key, []);
-        setPeerCount(peersRef.current.size);
+        setPeerCount(countViewers());
         nextStream.getVideoTracks().forEach((track) => peer.addTrack(track, nextStream));
         peer.onicecandidate = (event) => {
           if (event.candidate) socket.emit('camera:admin-ice-from-player', { adminId, steamId, candidate: event.candidate });
@@ -238,7 +274,7 @@ export function PlayerCameraProvider({ children }: { children: React.ReactNode }
             peer.close();
             peersRef.current.delete(key);
             pendingIceRef.current.delete(key);
-            setPeerCount(peersRef.current.size);
+            setPeerCount(countViewers());
           }
         };
         const offer = await peer.createOffer();
@@ -246,17 +282,25 @@ export function PlayerCameraProvider({ children }: { children: React.ReactNode }
         if (peersRef.current.get(key) !== peer) return;
         socket.emit('camera:admin-offer', { adminId, steamId, description: peer.localDescription });
       });
-      socket.on('camera:viewer-stopped', ({ hudId, viewerId }: { hudId: string; viewerId: string }) => {
-        const key = `${hudId}:${viewerId}`;
-        const peer = peersRef.current.get(key);
-        if (!peer) return;
-        peer.close();
-        peersRef.current.delete(key);
-        pendingIceRef.current.delete(key);
-        setPeerCount(peersRef.current.size);
+      socket.on('camera:viewer-stopped', ({ hudId, viewerId, steamId }: { hudId: string; viewerId: string; steamId?: string }) => {
+        const prefix = hudId + ':' + viewerId + ':';
+        for (const [key, peer] of peersRef.current) {
+          if (key.startsWith(prefix) && (!steamId || key === prefix + steamId)) {
+            peer.close();
+            peersRef.current.delete(key);
+            videoSendersRef.current.delete(key);
+            pendingIceRef.current.delete(key);
+          }
+        }
+        setPeerCount(countViewers());
       });
-      socket.on('camera:answer', async ({ hudId, viewerId, description }) => {
-        const key = `${hudId}:${viewerId}`;
+      socket.on('camera:set-quality', ({ hudId, viewerId, steamId, quality }: { hudId: string; viewerId: string; steamId: string; quality: 'preview' | 'full' }) => {
+        const key = hudId + ':' + viewerId + ':' + steamId;
+        const sender = videoSendersRef.current.get(key);
+        if (sender) void setPeerQuality(sender, quality);
+      });
+      socket.on('camera:answer', async ({ hudId, viewerId, steamId, description }) => {
+        const key = hudId + ':' + viewerId + ':' + steamId;
         const peer = peersRef.current.get(key);
         if (!peer) return;
         await peer.setRemoteDescription(description);
@@ -275,8 +319,8 @@ export function PlayerCameraProvider({ children }: { children: React.ReactNode }
         pendingIceRef.current.set(key, []);
         for (const candidate of candidates) await peer.addIceCandidate(candidate).catch(() => undefined);
       });
-      socket.on('camera:ice-from-hud', async ({ hudId, viewerId, candidate }) => {
-        const key = `${hudId}:${viewerId}`;
+      socket.on('camera:ice-from-hud', async ({ hudId, viewerId, steamId, candidate }) => {
+        const key = hudId + ':' + viewerId + ':' + steamId;
         const peer = peersRef.current.get(key);
         if (!peer) return;
         if (peer.remoteDescription) await peer.addIceCandidate(candidate).catch(() => undefined);
