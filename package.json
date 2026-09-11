@@ -51,6 +51,7 @@
         "test:veto": "playwright test -c tests/playwright.config.ts --grep @veto",
         "test:cs-major": "playwright test -c tests/playwright.config.ts --grep @cs-major",
         "test:map-catalog": "tsx scripts/test-client-map-catalog.ts",
+        "test:player-cameras": "node scripts/test-player-camera-streams.mjs",
         "test:report": "playwright show-report -c tests/playwright.config.ts",
         "test:install": "playwright install --with-deps",
         "screenshot:generate": "tsx scripts/generate-screenshots.ts",

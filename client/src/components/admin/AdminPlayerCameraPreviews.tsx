@@ -7,8 +7,8 @@ type Transport = 'p2p' | 'relay';
 type Props = { steamIds: string[]; transport: Transport; iceServers: RTCIceServer[] };
 type Offer = { adminId: string; steamId: string; description: RTCSessionDescriptionInit };
 type Candidate = { steamId: string; candidate: RTCIceCandidateInit };
-type RelayChunk = { steamId: string; chunk: unknown; mimeType?: string };
-type RelayState = { source: MediaSource; buffer: SourceBuffer | null; queue: ArrayBuffer[]; mimeType: string };
+type RelayChunk = { steamId: string; chunk: unknown; mimeType?: string; sequence?: number };
+type RelayState = { source: MediaSource; url: string; buffer: SourceBuffer | null; queue: ArrayBuffer[]; mimeType: string };
 
 function asBuffer(value: unknown): ArrayBuffer | null {
   if (value instanceof ArrayBuffer) return value;
@@ -22,13 +22,14 @@ export function AdminPlayerCameraPreviews({ steamIds, transport, iceServers }: P
   const idsRef = React.useRef(steamIds);
   const videosRef = React.useRef(new Map<string, HTMLVideoElement | null>());
   const peersRef = React.useRef(new Map<string, RTCPeerConnection>());
+  const pendingIceRef = React.useRef(new Map<string, RTCIceCandidateInit[]>());
   const relaysRef = React.useRef(new Map<string, RelayState>());
   const [states, setStates] = React.useState<Record<string, string>>({});
   const [connected, setConnected] = React.useState(false);
   const idsKey = steamIds.join(',');
   const iceServersKey = JSON.stringify(iceServers);
 
-  React.useEffect(() => { idsRef.current = steamIds; }, [idsKey, steamIds]);
+  idsRef.current = idsKey ? idsKey.split(',') : [];
 
   const setState = React.useCallback((steamId: string, value: string) => {
     setStates((current) => ({ ...current, [steamId]: value }));
@@ -47,13 +48,14 @@ export function AdminPlayerCameraPreviews({ steamIds, transport, iceServers }: P
       previous?.close();
       const peer = new RTCPeerConnection({ iceServers });
       peersRef.current.set(steamId, peer);
+      pendingIceRef.current.set(steamId, []);
       setState(steamId, 'connecting');
       peer.ontrack = (event) => {
+        if (peersRef.current.get(steamId) !== peer) return;
         const video = videosRef.current.get(steamId);
         const stream = event.streams[0];
         if (!video || !stream) return;
         video.srcObject = stream;
-        setState(steamId, 'live');
         void video.play().catch(() => undefined);
       };
       peer.onicecandidate = (event) => {
@@ -62,47 +64,69 @@ export function AdminPlayerCameraPreviews({ steamIds, transport, iceServers }: P
         }
       };
       peer.onconnectionstatechange = () => {
-        if (['failed', 'closed', 'disconnected'].includes(peer.connectionState)) setState(steamId, 'offline');
+        if (peer.connectionState === 'disconnected') setState(steamId, 'reconnecting');
+        if (['failed', 'closed'].includes(peer.connectionState) && peersRef.current.get(steamId) === peer) {
+          setState(steamId, 'offline');
+        }
       };
       try {
         await peer.setRemoteDescription(description);
+        if (peersRef.current.get(steamId) !== peer) return;
+        const candidates = pendingIceRef.current.get(steamId) || [];
+        pendingIceRef.current.set(steamId, []);
+        for (const candidate of candidates) await peer.addIceCandidate(candidate).catch(() => undefined);
         const answer = await peer.createAnswer();
         await peer.setLocalDescription(answer);
+        if (peersRef.current.get(steamId) !== peer) return;
         socket.emit('camera:admin-answer', { adminId, steamId, description: peer.localDescription });
       } catch {
         setState(steamId, 'offline');
       }
     });
     socket.on('camera:admin-ice-from-player', async ({ steamId, candidate }: Candidate) => {
-      await peersRef.current.get(steamId)?.addIceCandidate(candidate).catch(() => undefined);
+      const peer = peersRef.current.get(steamId);
+      if (!peer) return;
+      if (peer.remoteDescription) await peer.addIceCandidate(candidate).catch(() => undefined);
+      else pendingIceRef.current.get(steamId)?.push(candidate);
     });
     socket.on('camera:admin-stopped', ({ steamId }: { steamId: string }) => {
       peersRef.current.get(steamId)?.close();
+      peersRef.current.delete(steamId);
+      pendingIceRef.current.delete(steamId);
       setState(steamId, 'offline');
       const video = videosRef.current.get(steamId);
       if (video) video.srcObject = null;
     });
-    socket.on('camera:admin-relay-chunk', ({ steamId, chunk, mimeType }: RelayChunk) => {
+    socket.on('camera:admin-relay-chunk', ({ steamId, chunk, mimeType, sequence }: RelayChunk) => {
       const bytes = asBuffer(chunk);
       if (!bytes || !mimeType) return;
       let relay = relaysRef.current.get(steamId);
+      if (sequence === 0 && relay) {
+        if (relay.source.readyState === 'open') relay.source.endOfStream();
+        URL.revokeObjectURL(relay.url);
+        relaysRef.current.delete(steamId);
+        relay = undefined;
+      }
       if (!relay) {
         const source = new MediaSource();
-        relay = { source, buffer: null, queue: [bytes], mimeType };
+        const url = URL.createObjectURL(source);
+        relay = { source, url, buffer: null, queue: [bytes], mimeType };
         relaysRef.current.set(steamId, relay);
         const video = videosRef.current.get(steamId);
         if (video) {
           video.srcObject = null;
-          video.src = URL.createObjectURL(source);
+          video.src = url;
           void video.play().catch(() => undefined);
         }
         source.addEventListener('sourceopen', () => {
           try {
             relay!.buffer = source.addSourceBuffer(mimeType);
             relay!.buffer.addEventListener('updateend', () => {
+              const video = videosRef.current.get(steamId);
+              if (video) void video.play().catch(() => undefined);
+              setState(steamId, 'live');
               if (relay!.buffer && !relay!.buffer.updating && relay!.queue.length) {
                 relay!.buffer.appendBuffer(relay!.queue.shift()!);
-                setState(steamId, 'live');
               }
             });
             relay!.buffer.appendBuffer(relay!.queue.shift()!);
@@ -114,9 +138,9 @@ export function AdminPlayerCameraPreviews({ steamIds, transport, iceServers }: P
       }
       relay.queue.push(bytes);
       if (relay.buffer && !relay.buffer.updating && relay.queue.length) relay.buffer.appendBuffer(relay.queue.shift()!);
-      setState(steamId, 'live');
     });
     const peers = peersRef.current;
+    const pendingIce = pendingIceRef.current;
     const relays = relaysRef.current;
     const videos = videosRef.current;
     return () => {
@@ -125,7 +149,9 @@ export function AdminPlayerCameraPreviews({ steamIds, transport, iceServers }: P
       socketRef.current = null;
       peers.forEach((peer) => peer.close());
       peers.clear();
+      pendingIce.clear();
       relays.forEach((relay) => relay.source.readyState === 'open' && relay.source.endOfStream());
+      relays.forEach((relay) => URL.revokeObjectURL(relay.url));
       relays.clear();
       videos.forEach((video) => { if (video) { video.srcObject = null; video.removeAttribute('src'); } });
     };
@@ -137,8 +163,8 @@ export function AdminPlayerCameraPreviews({ steamIds, transport, iceServers }: P
     const socket = socketRef.current;
     if (!socket?.connected) return;
     socket.emit('camera:admin-watch', { steamId: null });
-    steamIds.forEach((steamId) => socket.emit('camera:admin-watch', { steamId }));
-  }, [idsKey, steamIds]);
+    idsKey.split(',').filter(Boolean).forEach((steamId) => socket.emit('camera:admin-watch', { steamId }));
+  }, [idsKey]);
 
   if (!steamIds.length) return <Typography variant="body2" color="text.secondary">None</Typography>;
   return (
@@ -149,6 +175,7 @@ export function AdminPlayerCameraPreviews({ steamIds, transport, iceServers }: P
             component="video"
             ref={(element: HTMLVideoElement | null) => videosRef.current.set(steamId, element)}
             autoPlay muted playsInline
+            onPlaying={() => setState(steamId, 'live')}
             sx={{ display: 'block', width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', bgcolor: '#050505' }}
           />
           <Stack direction="row" spacing={1} alignItems="center" sx={{ position: 'absolute', left: 8, right: 8, bottom: 8 }}>
