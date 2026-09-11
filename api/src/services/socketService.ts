@@ -49,6 +49,10 @@ function requestAdminCameraPeer(adminId: string, steamId: string): void {
   cameraPublishers.get(steamId)?.emit('camera:create-admin-peer', { adminId, steamId });
 }
 
+function stopHudCameraViewer(hudId: string, viewerId: string, steamId: string): void {
+  cameraPublishers.get(steamId)?.emit('camera:viewer-stopped', { hudId, viewerId, steamId });
+}
+
 function registerPlayerCameraSocket(socket: Socket): void {
   const identityPromise = resolveViewerIdentity(
     socket.request as unknown as Parameters<typeof resolveViewerIdentity>[0]
@@ -226,9 +230,14 @@ function registerHudCameraSocket(socket: Socket): void {
     const watchers = cameraHudWatchers.get(socket.id);
     if (!watchers) return;
     const steamId = payload?.steamId?.trim();
+    const previousSteamId = watchers.get(viewerId);
     if (!steamId) {
+      if (previousSteamId) stopHudCameraViewer(socket.id, viewerId, previousSteamId);
       watchers.delete(viewerId);
       return;
+    }
+    if (previousSteamId && previousSteamId !== steamId) {
+      stopHudCameraViewer(socket.id, viewerId, previousSteamId);
     }
     watchers.set(viewerId, steamId);
     const policy = await getPlayerCameraPolicy();
@@ -252,7 +261,15 @@ function registerHudCameraSocket(socket: Socket): void {
     cameraPublishers.get(steamId)?.emit('camera:ice-from-hud', { hudId: socket.id, viewerId, candidate });
   });
 
-  socket.on('disconnect', () => cameraHudWatchers.delete(socket.id));
+  socket.on('disconnect', () => {
+    const watchers = cameraHudWatchers.get(socket.id);
+    if (watchers) {
+      for (const [viewerId, steamId] of watchers) {
+        stopHudCameraViewer(socket.id, viewerId, steamId);
+      }
+    }
+    cameraHudWatchers.delete(socket.id);
+  });
 }
 
 export async function getPlayerCameraRuntimeStatus() {

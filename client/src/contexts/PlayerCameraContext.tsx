@@ -246,6 +246,15 @@ export function PlayerCameraProvider({ children }: { children: React.ReactNode }
         if (peersRef.current.get(key) !== peer) return;
         socket.emit('camera:admin-offer', { adminId, steamId, description: peer.localDescription });
       });
+      socket.on('camera:viewer-stopped', ({ hudId, viewerId }: { hudId: string; viewerId: string }) => {
+        const key = `${hudId}:${viewerId}`;
+        const peer = peersRef.current.get(key);
+        if (!peer) return;
+        peer.close();
+        peersRef.current.delete(key);
+        pendingIceRef.current.delete(key);
+        setPeerCount(peersRef.current.size);
+      });
       socket.on('camera:answer', async ({ hudId, viewerId, description }) => {
         const key = `${hudId}:${viewerId}`;
         const peer = peersRef.current.get(key);
