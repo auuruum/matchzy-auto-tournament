@@ -52,7 +52,7 @@ function createTestPattern(label: string): { stream: MediaStream; stop: () => vo
     context.textAlign = 'center';
     context.fillText('MAT PLAYER CAMERA TEST', canvas.width / 2, 300);
     context.font = '36px monospace';
-    context.fillText(new Date().toLocaleTimeString(), canvas.width / 2, 390);
+    context.fillText(new Date().toLocaleTimeString('en-GB', { hour12: false }), canvas.width / 2, 390);
     context.fillText(`STEAM ${label}`, canvas.width / 2, 450);
   }, 100);
   const stream = canvas.captureStream(10);
