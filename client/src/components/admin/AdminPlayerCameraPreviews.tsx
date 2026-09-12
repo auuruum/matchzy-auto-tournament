@@ -1,10 +1,16 @@
 /* global HTMLVideoElement, MediaSource, SourceBuffer, RTCIceServer, RTCSessionDescriptionInit, RTCIceCandidateInit, RTCPeerConnection */
 import React from 'react';
-import { Box, Chip, Stack, Typography } from '@mui/material';
+import { Box, Button, Chip, Stack, Typography } from '@mui/material';
 import { io, type Socket } from 'socket.io-client';
 
 type Transport = 'p2p' | 'relay';
-type Props = { steamIds: string[]; transport: Transport; iceServers: RTCIceServer[] };
+type Props = {
+  steamIds: string[];
+  transport: Transport;
+  iceServers: RTCIceServer[];
+  playerNames: Record<string, string>;
+  onBlock: (steamId: string) => void;
+};
 type Offer = { adminId: string; steamId: string; description: RTCSessionDescriptionInit };
 type Candidate = { steamId: string; candidate: RTCIceCandidateInit };
 type RelayChunk = { steamId: string; chunk: unknown; mimeType?: string; sequence?: number };
@@ -17,7 +23,7 @@ function asBuffer(value: unknown): ArrayBuffer | null {
   return null;
 }
 
-export function AdminPlayerCameraPreviews({ steamIds, transport, iceServers }: Props) {
+export function AdminPlayerCameraPreviews({ steamIds, transport, iceServers, playerNames, onBlock }: Props) {
   const socketRef = React.useRef<Socket | null>(null);
   const idsRef = React.useRef(steamIds);
   const videosRef = React.useRef(new Map<string, HTMLVideoElement | null>());
@@ -178,9 +184,39 @@ export function AdminPlayerCameraPreviews({ steamIds, transport, iceServers }: P
             onPlaying={() => setState(steamId, 'live')}
             sx={{ display: 'block', width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', bgcolor: '#050505' }}
           />
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ position: 'absolute', left: 8, right: 8, bottom: 8 }}>
-            <Chip size="small" label={steamId} sx={{ bgcolor: 'rgba(0,0,0,.7)', color: '#fff' }} />
+          <Stack
+            direction="row"
+            spacing={1}
+            alignItems="center"
+            sx={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: 0,
+              p: 1,
+              pt: 4,
+              background: 'linear-gradient(transparent, rgba(0,0,0,.88))',
+            }}
+          >
+            <Box minWidth={0} flex={1}>
+              <Typography color="common.white" fontWeight={700} noWrap>
+                {playerNames[steamId] || 'Unknown player'}
+              </Typography>
+              <Typography variant="caption" color="rgba(255,255,255,.72)" noWrap display="block">
+                {steamId}
+              </Typography>
+            </Box>
             <Chip size="small" color={states[steamId] === 'live' ? 'success' : 'default'} label={states[steamId] || (connected ? 'waiting' : 'connecting')} />
+            <Button
+              size="small"
+              color="error"
+              variant="contained"
+              aria-label={`Block camera for ${playerNames[steamId] || steamId}`}
+              onClick={() => onBlock(steamId)}
+              sx={{ whiteSpace: 'nowrap' }}
+            >
+              Block camera
+            </Button>
           </Stack>
         </Box>
       ))}

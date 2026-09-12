@@ -36,6 +36,7 @@ export function PlayerCameraSettings() {
   const [status, setStatus] = React.useState<Status | null>(null);
   const [steamId, setSteamId] = React.useState('');
   const [error, setError] = React.useState('');
+  const [playerNames, setPlayerNames] = React.useState<Record<string, string>>({});
 
   const refresh = React.useCallback(async () => {
     const response = await fetch('/api/player-cameras/admin', { credentials: 'include' });
@@ -45,6 +46,13 @@ export function PlayerCameraSettings() {
 
   React.useEffect(() => {
     void refresh().catch((caught) => setError(caught instanceof Error ? caught.message : String(caught)));
+    void fetch('/api/players', { credentials: 'include' })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(await readError(response));
+        return response.json() as Promise<{ players?: Array<{ id: string; name: string }> }>;
+      })
+      .then(({ players = [] }) => setPlayerNames(Object.fromEntries(players.map((player) => [player.id, player.name]))))
+      .catch(() => undefined);
     const timer = window.setInterval(() => void refresh().catch(() => undefined), 3000);
     return () => window.clearInterval(timer);
   }, [refresh]);
@@ -123,14 +131,13 @@ export function PlayerCameraSettings() {
       )}
       <Box>
         <Typography variant="subtitle2" gutterBottom>Active cameras</Typography>
-        <AdminPlayerCameraPreviews steamIds={status.publishers} transport={status.transport} iceServers={status.iceServers || []} />
-        <Box display="flex" gap={1} flexWrap="wrap" mt={1.5}>
-          {status.publishers.map((id) => (
-            <Button key={id} size="small" color="error" variant="outlined" onClick={() => void block(id, true).catch((caught) => setError(String(caught)))}>
-              Disable {id}
-            </Button>
-          ))}
-        </Box>
+        <AdminPlayerCameraPreviews
+          steamIds={status.publishers}
+          transport={status.transport}
+          iceServers={status.iceServers || []}
+          playerNames={playerNames}
+          onBlock={(id) => void block(id, true).catch((caught) => setError(String(caught)))}
+        />
       </Box>
       <Box display="flex" gap={1}>
         <TextField
