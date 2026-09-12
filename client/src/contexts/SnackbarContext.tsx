@@ -6,7 +6,7 @@ import {
   VariantType,
   SnackbarKey,
 } from 'notistack';
-import { Alert, GlobalStyles, IconButton, Slide, TransitionProps } from '@mui/material';
+import { Alert, Fade, GlobalStyles, IconButton, TransitionProps } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 
 type ShowSnackbarOptions = {
@@ -42,9 +42,9 @@ const SnackbarContext = createContext<SnackbarContextType | undefined>(undefined
 const SNACKBAR_SX = {
   // Pointer-events for the whole toast subtree are handled globally in the
   // provider below — a toast must never steal a click from the page.
-  width: 'min(500px, calc(100vw - 24px))',
+  width: 'min(360px, calc(100vw - 32px))',
   minWidth: 0,
-  maxWidth: '500px',
+  maxWidth: '360px',
   borderRadius: 2,
   boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
   fontWeight: 500,
@@ -116,29 +116,12 @@ const ErrorSnackbar = createSnackbarVariant('error', 'ErrorSnackbar');
 const WarningSnackbar = createSnackbarVariant('warning', 'WarningSnackbar');
 const InfoSnackbar = createSnackbarVariant('info', 'InfoSnackbar');
 
-// Custom Slide transition with smooth easing for snackbars
-const SlideTransition = React.forwardRef<
+// Fade avoids crossing fixed UI such as the persistent player-camera dock.
+const FadeTransition = React.forwardRef<
   unknown,
   TransitionProps & { children: React.ReactElement }
->((props, ref) => {
-  return (
-    <Slide
-      {...props}
-      ref={ref}
-      // Use vertical motion to avoid horizontal overflow/scrollbar shifts.
-      direction="up"
-      timeout={{
-        enter: 400,
-        exit: 300,
-      }}
-      easing={{
-        enter: 'cubic-bezier(0.0, 0, 0.2, 1)',
-        exit: 'cubic-bezier(0.4, 0, 1, 1)',
-      }}
-    />
-  );
-});
-SlideTransition.displayName = 'SlideTransition';
+>((props, ref) => <Fade {...props} ref={ref} timeout={{ enter: 220, exit: 180 }} />);
+FadeTransition.displayName = 'FadeTransition';
 
 export function SnackbarProvider({ children }: { children: ReactNode }) {
   const showSnackbar = useCallback(
@@ -252,7 +235,7 @@ export function SnackbarProvider({ children }: { children: ReactNode }) {
           horizontal: 'right',
         }}
         autoHideDuration={6000}
-        TransitionComponent={SlideTransition}
+        TransitionComponent={FadeTransition}
         dense={false}
         Components={{
           success: SuccessSnackbar,

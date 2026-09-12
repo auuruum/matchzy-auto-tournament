@@ -1,6 +1,6 @@
 /* global MediaRecorder, MediaStream, RTCPeerConnection, RTCIceServer, RTCIceCandidateInit */
 import React from 'react';
-import { Box, Button, Card, Chip, Stack, Typography } from '@mui/material';
+import { Box, Button, Card, Chip, GlobalStyles, Stack, Typography } from '@mui/material';
 import VideocamIcon from '@mui/icons-material/Videocam';
 import { io, type Socket } from 'socket.io-client';
 import { useAuth } from './AuthContext';
@@ -392,7 +392,8 @@ function PlayerCameraStatusDock() {
 
   if (!active && !previewStream) return null;
   return (
-    <Card sx={{ position: 'fixed', right: 20, bottom: 20, zIndex: 1300, width: 280, p: 1.25, boxShadow: 8 }}>
+    <Card sx={{ position: 'fixed', right: { xs: 16, sm: 20 }, bottom: { xs: 16, sm: 20 }, zIndex: 1300, width: { xs: 'calc(100% - 32px)', sm: 360 }, p: 1.25, boxShadow: 8 }}>
+      <GlobalStyles styles={{ 'div.notistack-SnackbarContainer': { bottom: '190px !important' } }} />
       <Stack spacing={1}>
         <Box display="flex" alignItems="center" justifyContent="space-between" gap={1}>
           <Typography variant="subtitle2" fontWeight={700}>Player camera</Typography>
